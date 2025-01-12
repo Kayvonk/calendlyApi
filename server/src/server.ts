@@ -10,7 +10,7 @@ const port = 5000;
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL, // Frontend URL
+    origin: process.env.FRONTEND_URL,
     credentials: true,
   })
 );
@@ -25,12 +25,9 @@ app.get('/auth', (_req, res) => {
   res.redirect(url);
 });
 
-// Callback route where Calendly redirects after user authorization
-// Callback route where Calendly redirects after user authorization
+// Callback route
 app.get('/callback', async (req, res) => {
-  const { code } = req.query; // Get the authorization code from the URL
-
-  console.log('Received code:', code);  // Add logging here
+  const { code } = req.query;
 
   if (!code) {
     res.status(400).send('Authorization code is missing.');
@@ -41,7 +38,6 @@ app.get('/callback', async (req, res) => {
   const redirectUri = process.env.CALENDLY_REDIRECT_URI!;
 
   try {
-    // Exchange the code for an access token
     const response = await axios.post(
       'https://calendly.com/oauth/token',
       new URLSearchParams({
@@ -54,26 +50,21 @@ app.get('/callback', async (req, res) => {
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
 
-    console.log('Calendly Response:', response.data);  // Add logging for the response
-
     const { access_token } = response.data;
     if (!access_token) {
-      console.error('Access token not found');
       res.status(500).send('Access token not found.');
     }
 
-    // Redirect to frontend with access token in URL
     res.redirect(`${process.env.FRONTEND_URL}/callback?access_token=${access_token}`);
   } catch (error: any) {
-    console.error('Error during authentication', error.response ? error.response.data : error.message);
     res.status(500).send('Error during authentication.');
   }
 });
 
-
-// Fetch user data from Calendly
+// Fetch user data
 app.get('/user-data', async (req, res) => {
   const { access_token } = req.query;
+
   if (!access_token) {
     return res.status(400).send('Access token is missing.');
   }
@@ -86,39 +77,57 @@ app.get('/user-data', async (req, res) => {
     });
     return res.json(response.data);
   } catch (error) {
-    console.error('Error fetching user data', error);
     return res.status(500).send('Error fetching user data.');
   }
 });
 
-// Schedule an event in the logged-in user's calendar
-app.post('/schedule', async (req, res) => {
-  const { access_token, event_type_uuid, start_time } = req.body;
+app.get('/event-types', async (req, res) => {
+  const authHeader = req.headers.authorization;
 
-  if (!access_token || !event_type_uuid || !start_time) {
-    return res.status(400).send('Missing required parameters.');
+  console.log('Authorization Header:', authHeader);
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(400).json({ error: 'Authorization token is missing or invalid.' });
   }
+
+  const accessToken = authHeader.split(' ')[1];
 
   try {
-    const response = await axios.post(
-      'https://api.calendly.com/scheduled_events',
-      {
-        event_type: event_type_uuid,
-        start_time,
-        end_time: start_time, // Placeholder, adjust according to the actual event
+
+    const userResponse = await axios.get('https://api.calendly.com/users/me', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
       },
-      {
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-        },
-      }
-    );
-    return res.json(response.data); // Return the scheduled event details
-  } catch (error) {
-    console.error('Error scheduling event', error);
-    return res.status(500).send('Error scheduling event.');
+    });
+
+    const userUri = userResponse.data.resource.uri;
+    console.log('User URI:', userUri);
+
+
+    const response = await axios.get('https://api.calendly.com/event_types', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      params: {
+        user: userUri,
+      },
+    });
+
+    console.log('Event Types:', response.data);
+
+    return res.json(response.data);
+  } catch (error: any) {
+    console.error('Error fetching event types:', error.response?.data || error.message);
+
+    const statusCode = error.response?.status || 500;
+    const errorMessage = error.response?.data || 'Internal Server Error';
+
+    return res.status(statusCode).json({
+      error: errorMessage,
+    });
   }
 });
+
 
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
